@@ -243,7 +243,7 @@ func Download(uri string, target string, headers map[string]string, msgs ...inte
 		if retry > 0 {
 			return Download(uri, target, headers, retry-1, timeout, progressbar)
 		} else {
-			return nil, fmt.Errorf("Failed to get response header, Error message → ", err.Error())
+			return nil, fmt.Errorf("failed to get response header: %w", err)
 		}
 	}
 	defer hresp.Body.Close()

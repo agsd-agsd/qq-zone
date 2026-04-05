@@ -17,6 +17,23 @@ import (
 
 type Qzone struct{}
 
+type QRLoginSession struct {
+	q         *Qzone
+	loginSig  string
+	qrsig     string
+	ptqrtoken string
+}
+
+type LoginPollResult struct {
+	Status   string
+	Message  string
+	Nickname string
+	Redirect string
+	Cookie   string
+	GTK      string
+	Uin      string
+}
+
 const (
 	QRCODE_SAVE_PATH = "qrcode.png"
 	USER_AGENT       = "Mozilla/5.0 (Windows NT 10.0; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/78.0.3904.108 Safari/537.36"
@@ -111,6 +128,99 @@ OuterLoop:
 	return res, nil
 }
 
+func NewQRLoginSession() (*QRLoginSession, []byte, error) {
+	q := new(Qzone)
+	loginSig, err := q.getLoginSig()
+	if err != nil {
+		return nil, nil, err
+	}
+
+	header, qrCode, err := q.getQRCBytes()
+	if err != nil {
+		return nil, nil, err
+	}
+
+	qrsig, err := readCookieValue(header, "qrsig")
+	if err != nil {
+		return nil, nil, err
+	}
+
+	return &QRLoginSession{
+		q:         q,
+		loginSig:  loginSig,
+		qrsig:     qrsig,
+		ptqrtoken: q.ptqrtoken(qrsig),
+	}, qrCode, nil
+}
+
+func (s *QRLoginSession) Poll() (*LoginPollResult, error) {
+	str, err := s.q.ifLogin(s.ptqrtoken, s.loginSig, s.qrsig)
+	if err != nil {
+		return nil, err
+	}
+
+	payloadStart := strings.Index(str, "(")
+	payloadEnd := strings.LastIndex(str, ")")
+	if payloadStart == -1 || payloadEnd == -1 || payloadEnd <= payloadStart {
+		return nil, errors.New("unknown login response")
+	}
+
+	parts := strings.Split(strings.ReplaceAll(str[payloadStart+1:payloadEnd], "'", ""), ",")
+	if len(parts) < 3 {
+		return nil, errors.New("invalid login response")
+	}
+
+	switch parts[0] {
+	case "65":
+		return &LoginPollResult{
+			Status:  "expired",
+			Message: "二维码已过期，请重新生成",
+		}, nil
+	case "66":
+		return &LoginPollResult{
+			Status:  "waiting",
+			Message: "二维码已生成，请扫码登录",
+		}, nil
+	case "67":
+		return &LoginPollResult{
+			Status:  "scanned",
+			Message: "已扫描，请在QQ中确认登录",
+		}, nil
+	case "0":
+		identity, err := s.q.credential(parts[2])
+		if err != nil {
+			return nil, err
+		}
+
+		return &LoginPollResult{
+			Status:   "success",
+			Message:  "登录成功",
+			Nickname: parts[len(parts)-1],
+			Redirect: parts[2],
+			Cookie:   identity["cookie"],
+			GTK:      identity["g_tk"],
+			Uin:      identity["uin"],
+		}, nil
+	default:
+		return &LoginPollResult{
+			Status:  "error",
+			Message: "未知登录状态，请稍后重试",
+		}, nil
+	}
+}
+
+func readCookieValue(header http.Header, name string) (string, error) {
+	for _, rawCookie := range header.Values("Set-Cookie") {
+		cookie := strings.Split(rawCookie, ";")[0]
+		parts := strings.SplitN(cookie, "=", 2)
+		if len(parts) == 2 && parts[0] == name && parts[1] != "" {
+			return parts[1], nil
+		}
+	}
+
+	return "", fmt.Errorf("failed to read cookie value: %s", name)
+}
+
 // 检查用户是否扫描成功以及是否登录成功
 func (q *Qzone) ifLogin(ptqrtoken string, loginSig string, qrsig string) (string, error) {
 	header := make(map[string]string)
@@ -133,25 +243,39 @@ func (q *Qzone) t() string {
 
 // 获取二维码
 func (q *Qzone) getQRC() (http.Header, error) {
-	url := "https://ssl.ptlogin2.qq.com/ptqrshow?appid=549000912&e=2&l=M&s=3&d=72&v=4&t=" + q.t() + "&daid=5&pt_3rd_aid=0"
-	resp, err := http.Get(url)
+	header, qrCode, err := q.getQRCBytes()
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
 
-	file, err := os.OpenFile(QRCODE_SAVE_PATH, os.O_RDWR|os.O_CREATE, 0666)
+	file, err := os.OpenFile(QRCODE_SAVE_PATH, os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0666)
 	if err != nil {
 		return nil, err
 	}
 	defer file.Close()
 
-	_, err = io.Copy(file, resp.Body)
+	_, err = file.Write(qrCode)
 	if err != nil {
 		return nil, err
 	}
 
-	return resp.Header, nil
+	return header, nil
+}
+
+func (q *Qzone) getQRCBytes() (http.Header, []byte, error) {
+	url := "https://ssl.ptlogin2.qq.com/ptqrshow?appid=549000912&e=2&l=M&s=3&d=72&v=4&t=" + q.t() + "&daid=5&pt_3rd_aid=0"
+	resp, err := http.Get(url)
+	if err != nil {
+		return nil, nil, err
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	return resp.Header, body, nil
 }
 
 // 获取login_sig参数
@@ -227,11 +351,15 @@ func (q *Qzone) credential(url string) (map[string]string, error) {
 		p_skey string
 		needs  = []string{"uin", "skey", "p_uin", "pt4_token", "p_skey"} // 需要从set-cookie取的参数
 		cookie = make([]string, 0)
+		res    = make(map[string]string)
 	)
 
 	setCookies := resp.Header.Values("Set-Cookie")
 	for _, val := range setCookies {
 		c := strings.Split(strings.Split(val, ";")[0], "=")
+		if len(c) < 2 {
+			continue
+		}
 		name := c[0]
 		value := c[1]
 		for _, ckey := range needs {
@@ -239,12 +367,14 @@ func (q *Qzone) credential(url string) (map[string]string, error) {
 				if ckey == "p_skey" {
 					p_skey = value
 				}
+				if (ckey == "uin" || ckey == "p_uin") && res["uin"] == "" {
+					res["uin"] = strings.TrimLeft(value, "o")
+				}
 				cookie = append(cookie, fmt.Sprintf("%s=%s", name, value))
 			}
 		}
 	}
 
-	res := make(map[string]string)
 	res["g_tk"] = q.gtk(p_skey)
 	res["cookie"] = strings.Join(cookie, "; ")
 
@@ -274,7 +404,7 @@ func GetAlbumList(hostUin, uin, gtk, cookie string) ([]gjson.Result, error) {
 
 	var (
 		pageStart int64 = 0
-		pageNum int64 = 30
+		pageNum   int64 = 30
 	)
 
 	var data []gjson.Result
@@ -374,7 +504,7 @@ func GetPhotoList(hostUin, uin string, cookie *string, gtk string, album gjson.R
 		res := gjson.Parse(str)
 		cade := res.Get("code").Int()
 		if cade != 0 {
-			return nil, fmt.Errorf(res.Get("message").String())
+			return nil, fmt.Errorf("%s", res.Get("message").String())
 		}
 
 		data := res.Get("data")
@@ -418,7 +548,7 @@ func GetMyFriends(url string, header map[string]string) (string, error) {
 
 	cade := gjson.Get(str, "code").Int()
 	if cade != 0 {
-		return "", fmt.Errorf(gjson.Get(str, "message").String())
+		return "", fmt.Errorf("%s", gjson.Get(str, "message").String())
 	}
 
 	friends := gjson.Get(str, "data.items_list")

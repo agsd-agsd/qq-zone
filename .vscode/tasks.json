@@ -1,0 +1,105 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Android: Build Debug APK",
+      "type": "process",
+      "command": "powershell",
+      "args": [
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        "${workspaceFolder}\\scripts\\build_android_debug.ps1"
+      ],
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "Android: Start Emulator",
+      "type": "process",
+      "command": "powershell",
+      "args": [
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-Command",
+        "$ErrorActionPreference = 'Stop'; $sdk = Join-Path $env:LOCALAPPDATA 'Android\\Sdk'; $emulator = Join-Path $sdk 'emulator\\emulator.exe'; $adb = Join-Path $sdk 'platform-tools\\adb.exe'; if (-not (Test-Path $emulator)) { throw \"Android emulator was not found at $emulator\" }; if (-not (Test-Path $adb)) { throw \"adb was not found at $adb\" }; $devices = & $adb devices; if ($devices -match '^emulator-\\d+\\s+device$') { Write-Host 'An emulator is already running.'; exit 0 }; Start-Process -FilePath $emulator -ArgumentList '-avd', '${input:androidAvd}'; Write-Host \"Starting emulator ${input:androidAvd}...\""
+      ],
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "Android: Wait For Emulator",
+      "type": "process",
+      "command": "powershell",
+      "args": [
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-Command",
+        "$ErrorActionPreference = 'Stop'; $sdk = Join-Path $env:LOCALAPPDATA 'Android\\Sdk'; $adb = Join-Path $sdk 'platform-tools\\adb.exe'; if (-not (Test-Path $adb)) { throw \"adb was not found at $adb\" }; & $adb start-server | Out-Null; function Get-EmulatorSerial { $lines = & $adb devices; foreach ($line in $lines) { if ($line -match '^(emulator-\\d+)\\s+device$') { return $matches[1] } }; return $null }; $serial = $null; for ($i = 0; $i -lt 90; $i++) { $serial = Get-EmulatorSerial; if ($serial) { break }; Start-Sleep -Seconds 2 }; if (-not $serial) { throw 'Timed out waiting for an emulator device.' }; for ($i = 0; $i -lt 120; $i++) { $boot = (& $adb -s $serial shell getprop sys.boot_completed 2>$null).Trim(); if ($boot -eq '1') { Write-Host \"Emulator ready: $serial\"; exit 0 }; Start-Sleep -Seconds 2 }; throw \"Timed out waiting for $serial to finish booting.\""
+      ],
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "Android: Install Debug APK",
+      "type": "process",
+      "command": "powershell",
+      "args": [
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-Command",
+        "$ErrorActionPreference = 'Stop'; $sdk = Join-Path $env:LOCALAPPDATA 'Android\\Sdk'; $adb = Join-Path $sdk 'platform-tools\\adb.exe'; $apk = Join-Path '${workspaceFolder}' 'android\\app\\build\\outputs\\apk\\debug\\app-debug.apk'; if (-not (Test-Path $adb)) { throw \"adb was not found at $adb\" }; if (-not (Test-Path $apk)) { throw \"APK not found at $apk. Run the build task first.\" }; function Get-EmulatorSerial { $lines = & $adb devices; foreach ($line in $lines) { if ($line -match '^(emulator-\\d+)\\s+device$') { return $matches[1] } }; return $null }; $serial = Get-EmulatorSerial; if (-not $serial) { throw 'No running emulator device was found.' }; & $adb -s $serial install -r $apk; if ($LASTEXITCODE -ne 0) { throw 'adb install failed.' }"
+      ],
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "Android: Launch App",
+      "type": "process",
+      "command": "powershell",
+      "args": [
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-Command",
+        "$ErrorActionPreference = 'Stop'; $sdk = Join-Path $env:LOCALAPPDATA 'Android\\Sdk'; $adb = Join-Path $sdk 'platform-tools\\adb.exe'; if (-not (Test-Path $adb)) { throw \"adb was not found at $adb\" }; function Get-EmulatorSerial { $lines = & $adb devices; foreach ($line in $lines) { if ($line -match '^(emulator-\\d+)\\s+device$') { return $matches[1] } }; return $null }; $serial = Get-EmulatorSerial; if (-not $serial) { throw 'No running emulator device was found.' }; & $adb -s $serial shell am start -W -n 'com.qzone.android/.MainActivity'; if ($LASTEXITCODE -ne 0) { throw 'Failed to launch com.qzone.android/.MainActivity.' }"
+      ],
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "Android: Build And Run On Emulator",
+      "dependsOrder": "sequence",
+      "dependsOn": [
+        "Android: Start Emulator",
+        "Android: Wait For Emulator",
+        "Android: Build Debug APK",
+        "Android: Install Debug APK",
+        "Android: Launch App"
+      ],
+      "problemMatcher": []
+    }
+  ],
+  "inputs": [
+    {
+      "id": "androidAvd",
+      "type": "promptString",
+      "description": "AVD name to start",
+      "default": "Pixel_9"
+    }
+  ]
+}

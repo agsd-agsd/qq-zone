@@ -4,3 +4,11 @@
 *.pprof
 /storage
 nohup.out
+android/.gradle
+android/build
+android/app/build
+android/mobilebridge-stub/build
+android/local.properties
+android/app/libs/*.aar
+android/app/libs/*.jar
+/todolist
