@@ -146,60 +146,7 @@ android/app/libs/qqzone-mobile.aar
 
 - `mobile/bridge/bridge.go`
 
-## 当前推荐的维护方向
-
-如果你现在只把这个仓库当作 Android 项目维护，建议把后续开发重点放在：
-
-- Web 登录稳定性
-- Cookie 会话导入
-- 相册选择体验
-- 下载任务状态
-- 文件导出和失败重试
-
-而不是继续扩展旧的终端交互入口。
-
-## 如果你不再需要终端版程序
-
-如果你已经决定以后只保留 Android 版本，下面这些文件可以优先考虑清理：
-
-### 可以直接删除的旧终端入口 / Windows 打包遗留
-
-- `main.go`
-- `app/controllers/BaseController.go`
-- `app/controllers/QzoneController.go`
-- `app.ico`
-- `app.syso`
-- `ico.manifest`
-- `qq-zone.exe`
-- `运行截图.png`
-
-### 可以继续清理的旧辅助代码
-
-这部分不是 Android 当前主流程所需，但删除前最好顺手做一次 `go mod tidy`：
-
-- `utils/logger/logger.go`
-- `utils/office/office.go`
-
-删除这部分后，通常还可以进一步从 `go.mod` 中清掉一些仅旧逻辑使用的依赖，例如：
-
-- `github.com/Unknwon/goconfig`
-- `github.com/360EntSecGroup-Skylar/excelize/v2`
-
-## 建议的清理顺序
-
-1. 先删除旧 CLI 入口和 Windows 资源文件
-2. 执行一次 `go build ./mobile/... ./utils/...`
-3. 执行 `.\scripts\build_android_debug.ps1`
-4. 确认 Android 正常构建后，再删除 `utils/logger` / `utils/office`
-5. 最后执行 `go mod tidy`
-
-## 说明
-
-仓库里仍然保留了一些历史结构，是为了让 Android 改造过程能渐进完成，而不是一次性大拆。
-
-如果你准备彻底转成“纯 Android + Go Core”项目，下一步最合适的动作通常是：
-
-- 去掉旧 CLI 主入口
-- 只保留 `android/ + mobile/ + utils/` 中 Android 实际使用到的部分
-- 重新整理一次目录和依赖
-
+## 未來可能的改進方向
+- 保持登錄狀態
+- 優化相冊選擇界面
+- 實現直接下載在用戶選擇的目錄，而不是先下載到應用工作目錄
